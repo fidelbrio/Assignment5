@@ -1,8 +1,8 @@
-#ifndef IMAP_H
+	#ifndef IMAP_H
 #define IMAP_H
 
 typedef struct _imap{
-	unsigned int map[10240];
+	unsigned int inodes[10240];
 } imap;
 
 void init(imap *);

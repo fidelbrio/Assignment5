@@ -22,8 +22,17 @@ int main(){
 		//name[15] = (char)i;
 		cout<<name<<endl;
 		FILE *fp = fopen(name.c_str(),"w");
-		ftruncate(fileno(fp),1024*1024);
+		for(int j = 0; j <1024*1024;j++){
+			fprintf(fp,"%c",'0');
+		}
+		//ftruncate(fileno(fp),1024*1024);
 		fclose(fp);
+	}
+	int buff =0;
+	string name = "./DRIVE/CHECKPOINT_REGION";
+	FILE *fp = fopen(name.c_str(),"w");
+	for(int i = 0; i<224;i++){
+		fprintf(fp,"%c",'0');
 	}
 	return 0;
 }
