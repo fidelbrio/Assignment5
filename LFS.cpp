@@ -2,10 +2,30 @@
 #include "segment.h"
 #include "imap.h"
 #include "inode.h"
+#include <string>
+#include <string.h>
+#include <fstream>
+#include <iostream>
 
-void import(string filename, stirng lfs_filename, segment *s, imap * map){
+using namespace std;
+
+/*int main(int argc, char * argv[]){
+	segment s;
+	imap map;
+	init(&map);
+	import(argv[1],argv[2],&s,&map);
+}*/
+
+
+void import2(string filename, string lfs_filename, segment *s, impa *map){
+	
+
+void import(string filename, string lfs_filename, segment *s, imap * map){
+	s->buffer[0] = 'a';
+	s->currByte++;
 	inode node;
 	node.name = lfs_filename;
+	node.nodeNum = s->currInode;
 	string line;
 	ifstream myfile(filename);
 	int byteCounter = 0; 
@@ -14,11 +34,17 @@ void import(string filename, stirng lfs_filename, segment *s, imap * map){
 	unsigned int tempBlocks[128];
 	node.blocks[0] = s->currBlock;
 	//tempBlocks[0] = s->currBlock;
-	while(getline(myfile, line)){
-		lineLen = sizeof(line);
-		for(int i = 0; i < lineLen; i++){
 
-			if(s->currByte == 1047551){ //if buffer== FULL-1 (add summary block)
+	char temp;
+	myfile >> temp;
+
+//	while(getline(myfile, line)){
+	while(temp != EOF){
+		//cout<<line<<endl;
+		lineLen = sizeof(line);
+//		for(int i = 0; i < lineLen; i++){
+
+			if(s->currByte == 1048576){ //if buffer== FULL-1 (add summary block)
 
 				writeSegment(s);
 				s->segNum++;
@@ -27,22 +53,33 @@ void import(string filename, stirng lfs_filename, segment *s, imap * map){
 				blockCounter++;
 				//UPDATE Checkpoint region for clean dirty bits
 			}
-
+/*			cout<<"line[i] is: "<<line[i]<<endl;
+			cout<< "s->currByte is: "<< s->currByte<<endl;
 			s->buffer[s->currByte] = line[i];
+			cout<< "s->buffer[s-currByte] is: "<< s->buffer[s->currByte]<<endl;
 			s->currByte++;
 			byteCounter++;	
-		
+*/			s->buffer[s->currByte] = temp;
+			s->currByte++;
+
+
 			if(byteCounter == 1024){ // keeps track of blocks
 				//update summary block here
-				s->inode[currBlock%1024] = node.nodeNum;
-				s->offset[currBlock%1024] = blockCounter;
+				s->inode[s->currBlock%1024] = node.nodeNum;
+				s->offset[s->currBlock%1024] = blockCounter;
 				blockCounter++;
 				s->currBlock += 1;
 				node.blocks[blockCounter] = s->currBlock;
 			}
 
-		}
+
+			myfile>>temp;
+
+//		}
 	} 
+
+
+
 	while(s->currByte%1024 != 0){ //MAKE SURE THAT the currByte is set at the next block
 		s->currByte++;
 	}
@@ -71,14 +108,14 @@ void import(string filename, stirng lfs_filename, segment *s, imap * map){
 	//updating imap;
 	//have to implement filename map to get what current inode were on
 	int currINode = 0; //TEMPORARY NEED TO CHANGE
-	map->inodes[currINode] = currBlock;
+	map->inodes[currINode] = s->currBlock;
 	//making a new inode and adding to buffer
 	node.nodeNum = s->currByte++;
 	node.fileSize = ((blockCounter-1)*1024) + byteCounter;
 	for(int i = 0 ; i<256; i++){
-		memcpy(s->buffer+(currBlock*1024) + i*4,map->inodes + i; 4);
+		memcpy(s->buffer+(s->currBlock*1024) + i*4,map->inodes + i, 4);
 	}
-	currBlock++;
+	s->currBlock++;
 	if(s->currByte == 1047551){ //if buffer== FULL-1 (add summary block)
 		writeSegment(s);
                 s->segNum++;
@@ -91,10 +128,14 @@ void import(string filename, stirng lfs_filename, segment *s, imap * map){
 	FILE * check;
 	check = fopen("DRIVE/CHECKPOINT_REGION","r+");
 	fseek(check,(currINode/40)*sizeof(int),SEEK_SET);
-	unsigned int location = (unsigned int)(currBlock-1);
+	unsigned int location = (unsigned int)((s->segNum*1024)+(s->currBlock-1));
 	fwrite(&location,4,1,check);
-	check.close();
+	fclose(check);
+	//check.close();
 	//update imap - done above
+	s->buffer[0] = 'g';
+	s->buffer[1] = 'r';
+	writeSegment(s);
 
 }
 
@@ -110,3 +151,15 @@ void shutdown(segment *s){
 	writeSegment(s);
 	exit(0);
 }
+
+
+int main(int argc, char * argv[]){
+        segment s;
+        imap map;
+        init(&map);
+	initializeSegment(&s);
+        import(argv[1],argv[2],&s,&map);
+	writeSegment(&s);
+
+}
+
