@@ -88,7 +88,12 @@ void import(string filename, stirng lfs_filename, segment *s, imap * map){
                 //UPDATE Checkpoint region for clean dirty bits
         }
 	//Update checkpoint region
-	
+	FILE * check;
+	check = fopen("DRIVE/CHECKPOINT_REGION","r+");
+	fseek(check,(currINode/40)*sizeof(int),SEEK_SET);
+	unsigned int location = (unsigned int)(currBlock-1);
+	fwrite(&location,4,1,check);
+	check.close();
 	//update imap - done above
 
 }
