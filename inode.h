@@ -2,7 +2,8 @@
 #define INODE_H
 #include <string>
 typedef struct _inode{
-	string name; //name of the file
+	int nodeNum;
+	std::string name; //name of the file
 	int fileSize; // size of the file
 	unsigned int blocks[128]; //files have a max size of 128K
 } inode;
