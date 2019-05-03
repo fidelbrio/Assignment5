@@ -34,5 +34,11 @@ int main(){
 	for(int i = 0; i<224;i++){
 		fprintf(fp,"%c",'0');
 	}
+
+	name = "./DRIVE/FILE_MAP";
+	fp = fopen(name.c_str(),"w");
+	for(int i = 0; i<1351680;i++){
+		fprintf(fp,"%c",'0');
+	}
 	return 0;
 }

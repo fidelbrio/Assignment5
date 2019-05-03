@@ -1,6 +1,8 @@
 #include "inode.h"
 #include <string>
 
+using namespace std; 
+
 int init(string filename, inode* node, int numBlocks, int extra){
 	for(int i = 0; i<128; i++){
 		node->blocks[i] = (unsigned int)-1;

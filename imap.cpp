@@ -24,6 +24,7 @@ void init(imap *map){
 	unsigned int buff;
 	for(int i = 0; i < 40; i++){
 		infile >> ar[i];
+		if(ar[i] == 0) continue;
 		//infile.read(reinterpret_cast<char *>(&buff),4);
 		//read(infile,&buff,4);
 		//cout<<ar[i]<<endl;

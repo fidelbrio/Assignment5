@@ -6,6 +6,8 @@
 #include <string.h>
 #include <fstream>
 #include <iostream>
+#include <fcntl.h>
+#include <unistd.h>
 
 using namespace std;
 
@@ -13,138 +15,131 @@ using namespace std;
 	segment s;
 	imap map;
 	init(&map);
-	import(argv[1],argv[2],&s,&map);
+	import2(argv[1],argv[2],&s,&map);
 }*/
-
-
-void import2(string filename, string lfs_filename, segment *s, impa *map){
-	
-
-void import(string filename, string lfs_filename, segment *s, imap * map){
-	s->buffer[0] = 'a';
-	s->currByte++;
-	inode node;
-	node.name = lfs_filename;
-	node.nodeNum = s->currInode;
-	string line;
-	ifstream myfile(filename);
-	int byteCounter = 0; 
-	int blockCounter = 0;
-	int lineLen;
-	unsigned int tempBlocks[128];
-	node.blocks[0] = s->currBlock;
-	//tempBlocks[0] = s->currBlock;
-
-	char temp;
-	myfile >> temp;
-
-//	while(getline(myfile, line)){
-	while(temp != EOF){
-		//cout<<line<<endl;
-		lineLen = sizeof(line);
-//		for(int i = 0; i < lineLen; i++){
-
-			if(s->currByte == 1048576){ //if buffer== FULL-1 (add summary block)
-
-				writeSegment(s);
-				s->segNum++;
-				s->currBlock += 1;
-				node.blocks[blockCounter] = s->currBlock; 
-				blockCounter++;
-				//UPDATE Checkpoint region for clean dirty bits
-			}
-/*			cout<<"line[i] is: "<<line[i]<<endl;
-			cout<< "s->currByte is: "<< s->currByte<<endl;
-			s->buffer[s->currByte] = line[i];
-			cout<< "s->buffer[s-currByte] is: "<< s->buffer[s->currByte]<<endl;
-			s->currByte++;
-			byteCounter++;	
-*/			s->buffer[s->currByte] = temp;
-			s->currByte++;
-
-
-			if(byteCounter == 1024){ // keeps track of blocks
-				//update summary block here
-				s->inode[s->currBlock%1024] = node.nodeNum;
-				s->offset[s->currBlock%1024] = blockCounter;
-				blockCounter++;
-				s->currBlock += 1;
-				node.blocks[blockCounter] = s->currBlock;
-			}
-
-
-			myfile>>temp;
-
-//		}
-	} 
-
-
-
-	while(s->currByte%1024 != 0){ //MAKE SURE THAT the currByte is set at the next block
-		s->currByte++;
-	}
-	blockCounter++;
-	//we can update the mapping file once we allocate the inode
-	//writing the file to the buffer
-	//may have to reset this file pointer
-	/*
-	ifstream src(filename,"r");
-	int start = s->currByte;
-	int i = 0;
-	int usedBlocks = 0;
-	while(1){
-		src >> s->buffer[currByte];
-		i++;
-		currByte++;
-		if(i == 1024){
-			usedBlocks++;
-			s->currBlock++;
-			//need to check if the buffer is full at this point and to add summary block?
-			i = 0;
+unsigned int findFreeInode(imap *map){
+	int index = 0;
+	while(true){
+		if(map->inodes[index] == 0){
+			return index;
 		}
+		index++;
 	}
-	src.close();
-	*/
-	//updating imap;
-	//have to implement filename map to get what current inode were on
-	int currINode = 0; //TEMPORARY NEED TO CHANGE
-	map->inodes[currINode] = s->currBlock;
-	//making a new inode and adding to buffer
-	node.nodeNum = s->currByte++;
-	node.fileSize = ((blockCounter-1)*1024) + byteCounter;
-	for(int i = 0 ; i<256; i++){
-		memcpy(s->buffer+(s->currBlock*1024) + i*4,map->inodes + i, 4);
-	}
-	s->currBlock++;
-	if(s->currByte == 1047551){ //if buffer== FULL-1 (add summary block)
-		writeSegment(s);
-                s->segNum++;
-                s->currBlock += 1;
-                node.blocks[blockCounter] = s->currBlock;
-                blockCounter++;
-                //UPDATE Checkpoint region for clean dirty bits
-        }
-	//Update checkpoint region
-	FILE * check;
-	check = fopen("DRIVE/CHECKPOINT_REGION","r+");
-	fseek(check,(currINode/40)*sizeof(int),SEEK_SET);
-	unsigned int location = (unsigned int)((s->segNum*1024)+(s->currBlock-1));
-	fwrite(&location,4,1,check);
-	fclose(check);
-	//check.close();
-	//update imap - done above
-	s->buffer[0] = 'g';
-	s->buffer[1] = 'r';
-	writeSegment(s);
-
 }
 
+void import2(string filename, string lfs_filename, segment *s, imap *map){
+	inode node;
+	node.name = lfs_filename;
+	//find iNode number from mappings file
+	int infile = open(filename.c_str(), O_RDONLY);
+	int numBlocks = 0;
+	int start = s->currBlock;
+	int bytesRead;
+	node.nodeNum = findFreeInode(map);
+	//cout<<inodeNum<<endl;
+	FILE* mapper;
+	mapper = fopen("./DRIVE/FILE_MAP","r+b");
+	fseek(mapper,132*node.nodeNum,SEEK_SET);
+	fputs(node.name.c_str(),mapper);
+	fseek(mapper, (132*node.nodeNum)+128, SEEK_SET);
+	fputs(to_string(node.nodeNum).c_str(),mapper);
+	while(1){
+		bytesRead = read(infile,s->buffer + ((s->currBlock) * 1024), 1024);
+		node.blocks[numBlocks] = (unsigned int)((s->segNum*1024)+s->currBlock);
+		s->offset[s->currBlock] = numBlocks;
+		numBlocks++;
+		s->inode[s->currBlock] = node.nodeNum;
+		s->currBlock++;
+		if(s->currBlock == 1015){
+			memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
+			memcpy(s->buffer+(1019*1024), s->offset, 4096);
+			writeSegment(s);
+			s->currBlock = 0;
+			s->segNum+=1;
+		}
+		//check if currBlock == 1024, and if so, write it out
+		if(bytesRead <1024) break;
+	}
+	//close(infile);
+	node.fileSize = (numBlocks*1024) + bytesRead;
+	memcpy(s->buffer+(s->currBlock*1024), &node,sizeof(node));
+	s->inode[s->currBlock] = node.nodeNum; 
+	s->offset[s->currBlock] = numBlocks;
+	numBlocks++;
+	s->currBlock++;
+	if(s->currBlock == 1015){
+		memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
+		memcpy(s->buffer+(1019*1024), s->offset, 4096);	
+		writeSegment(s);
+		s->currBlock = 0;
+		s->segNum += 1;
+
+	}
+
+	map->inodes[node.nodeNum] = (unsigned int)((s->segNum*1024)+ s->currBlock);
+	//for(int i = 0; i<256;i++){
+	memcpy(s->buffer+(s->currBlock*1024),map->inodes + node.nodeNum, 1024);
+	s->inode[s->currBlock] = node.nodeNum; 
+	s->offset[s->currBlock] = numBlocks;
+	numBlocks++;
+	s->currBlock++;
+	if(s->currBlock == 1015){
+		memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
+		memcpy(s->buffer+(1019*1024), s->offset, 4096);
+		writeSegment(s);
+		s->currBlock = 0;
+		s->segNum+=1;
+	}
+
+	close(infile);
+	unsigned int imapLocation = (s->segNum *1024) + s->currBlock;
+	s->inode[s->currBlock] = node.nodeNum;
+	s->offset[s->currBlock] = numBlocks;
+	s->currBlock++;
+	numBlocks++;
+	if(s->currBlock == 1015){
+		memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
+		memcpy(s->buffer+(1019*1024), s->offset, 4096);
+		writeSegment(s);
+		s->currBlock = 0;
+		s->segNum+=1;
+	}
+	int check = open("DRIVE/CHECKPOINT_REGION",O_RDWR);
+	lseek(check,(node.nodeNum/40)*4,SEEK_SET);
+	write(check,&imapLocation,4);
+	close(check);
+	writeSegment(s);
+}
 void remove(string lfs_filename){ //should only need inodes
 	
 }
 
-void list(){ //should only need inodes
-	
+void list(imap map){ //should only need inodes
+	ifstream mapper;
+	ifstream cr;
+ 	mapper.open("./DRIVE/FILE_MAP",ios::in|ios::binary);
+	for(int i = 0; i<10240; i++){
+		//mapper.seekg(132*i,mapper.beg);
+		char name[128];
+		unsigned int addr;
+		unsigned int seg;
+		for(int j = 0; j<128;j++){
+			mapper >> name[j];
+		}
+		mapper >> addr;
+		cout<<name<<endl;
+		cout<<addr<<endl;
+		cr.open("./DRIVE/CHECKPOINT_REGION",ios::in|ios::binary);
+		cr.seekg(4*addr,cr.beg);
+		cr>>seg;
+		unsigned int segNum = seg/1024;
+		unsigned int offset = seg%1024;
+		cout<<segNum<<endl;
+		cout<<offset<<endl;
+
+
+		if(i == 10) break;
+	}
 }
 
 void shutdown(segment *s){
@@ -158,8 +153,13 @@ int main(int argc, char * argv[]){
         imap map;
         init(&map);
 	initializeSegment(&s);
-        import(argv[1],argv[2],&s,&map);
+        import2(argv[1],argv[2],&s,&map);
+	import2(argv[3],argv[4],&s,&map);
 	writeSegment(&s);
+	s.currBlock= 0;
+	s.segNum++;
+	list(map);
+	//list();
 
 }
 
