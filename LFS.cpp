@@ -199,7 +199,7 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 	//outfile.close();
 	writeSegment(s);
 }
-void remove(string lfs_filename){ //should only need inodes
+void remove(string lfs_filename, imap * map){ //should only need inodes
 	char *buffer = new char[128];
 	int namesize = lfs_filename.size();
 	char *filename = new char[namesize];
@@ -295,6 +295,8 @@ void list(imap * map){ //should only need inodes
 		//do all this stuff only if the name in the file map is empty
 		//unsigned int imapLoc =i/256;
 		unsigned int inodeLoc = map->inodes[i];
+		if(inodeLoc == 0) continue;
+		cout<<"map->inodes["<<i<<"] = "<< map->inodes[i] <<endl;
 		//if(inodeLoc == 0) continue;
 		cout<<"INODE LOCATION (SHOULD BE 3): "<<inodeLoc<<endl;
 		//inodeLoc = 3;
@@ -332,9 +334,8 @@ void list(imap * map){ //should only need inodes
 		cout<<"temp.name: "<< temp->name<<endl;
 		cout<<"temp.size: "<< temp->fileSize<<endl;
 
-		//if(i==10) break;
+		//if(i==4) break;
 	}
-	exit(0);
 }
 
 void shutdown(segment *s){
@@ -347,7 +348,7 @@ int main(int argc, char * argv[]){
         segment s;
         imap map;
         init(&map);
-	exit(0);
+	//exit(0);
 	checkIn();
 	initializeSegment(&s);
         import2(argv[1],argv[2],&s,&map);
@@ -358,7 +359,7 @@ int main(int argc, char * argv[]){
 	writeSegment(&s);
 	s.currBlock= 0;
 	s.segNum++;
-	list(&map);
+	//list(&map);
 	//list();
 
 }
