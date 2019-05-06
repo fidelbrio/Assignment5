@@ -200,8 +200,70 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 	writeSegment(s);
 }
 void remove(string lfs_filename){ //should only need inodes
-	
+	char *buffer = new char[128];
+	int namesize = lfs_filename.size();
+	char *filename = new char[namesize];
+	cout << lfs_filename << endl;
+//	char g = '0';
+	for(int i = 0; i < namesize; i++){
+//		if(i < sizeof(lfs_filename)){
+		filename[i] = lfs_filename[i];
+//		}else{
+//			n = sprintf(*filename[i], '0');
+//			filename[i] = g;
+//		}
+	}
+	int position;
+	int index = 0;
+	ifstream file ("DRIVE/FILE_MAP");
+	bool found = false;
+	while(!found){
+		position = index*132;
+		file.seekg(position);
+		file.read(buffer, 128);
+		found = true;
+		for(int i = 0; i < namesize; i++){
+//			if(buffer[i] == '0'){ // This if makes it quit
+//				break;
+//			}
+			cout << buffer[i] << '+' << filename[i] << endl;
+			if(buffer[i] != filename[i]){
+				found = false;
+			}
+		}
+		if(buffer[namesize] != '0'){
+			found = false;
+		}
+		index++;
+		if(index == 10240){
+			break;
+		}
+	}
+	index--;
+	if(!found){
+		cout << "Could not find the specified file" << endl;
+	}
+	if(found){
+		cout << index << endl;
+		map->inodes[index] = 0;
+	}
+	//Must erase the file name in the file map
+
+	char *entireFile = new char[1351680];
+	file.seekg(0);
+	file.read(entireFile, 1351680);
+//	index -= 1;
+	for(int i = 0; i < 128; i++){
+		entireFile[position+i] = '0';
+	}
+	file.close();
+	ofstream file2;
+	file2.open("DRIVE/FILE_MAP");
+	file2 << entireFile;
+	file2.close();
+
 }
+
 
 void list(imap * map){ //should only need inodes
 	ifstream mapper;
