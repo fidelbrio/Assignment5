@@ -15,11 +15,13 @@ unsigned int checkpoint_region[40];
 char file_map[337920*4];
 
 unsigned int findFreeInode(imap *map){
-	int index = 0;
+	unsigned int index = 0;
 	while(true){
 		if(map->inodes[index] == 0){
+			cout<<"INDEX: "<<index<<endl;
 			return index;
 		}
+		//cout<< map->inodes[index];
 		index++;
 	}
 }
@@ -63,10 +65,11 @@ void fileOut(){
 }
 
 void import2(string filename, string lfs_filename, segment *s, imap *map){
-	checkIn();//these should be done on startup
+	//checkIn();//these should be done on startup
 	fileIn();
 	inode node;
-	node.name = lfs_filename;
+	memcpy(node.name,lfs_filename.c_str(),128);
+	//node.name = lfs_filename.c_str();
 	//find iNode number from mappings file
 	int infile = open(filename.c_str(), O_RDONLY);
 	int numBlocks = 0;
@@ -79,9 +82,9 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 	fseek(mapper,132*node.nodeNum,SEEK_SET);
 	fputs(node.name.c_str(),mapper);
 	fseek(mapper, (132*node.nodeNum)+128, SEEK_SET);
-	fputs(to_string(node.nodeNum).c_str(),mapper);*/
-	cout<<node.nodeNum<<endl;
-	cout<<node.name<<endl;
+ 	fputs(to_string(node.nodeNum).c_str(),mapper);*/
+	cout<<"INITIAL NODENUM: "<<node.nodeNum<<endl;
+	cout<<"INITIAL NODENAME: "<<node.name<<endl;
 	char buffer[128];
 	for(int i =0 ;i<128;i++){
 		if(i<lfs_filename.size()){
@@ -91,16 +94,16 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 		}
 	}
 	//memcpy(buffer,lfs_filename.c_str(),128);
-	cout<<sizeof(buffer)<<endl;
-	cout<<buffer<<endl;
+	//cout<<sizeof(buffer)<<endl;
+	//cout<<buffer<<endl;
 	memcpy(file_map+(node.nodeNum*132),buffer,128);
-	for(int i =0; i<128;i++) cout<<file_map[(node.nodeNum*132)+i];
-	cout<<endl;
+	//for(int i =0; i<128;i++) cout<<file_map[(node.nodeNum*132)+i];
+	//cout<<endl;
 	memcpy(file_map+((node.nodeNum*132) + 4),&(node.nodeNum),4);
 	for(int i = 0; i<4;i++){
-		cout<<file_map[(node.nodeNum*132)+i+128];
+		//cout<<file_map[(node.nodeNum*132)+i+128];
 	}
-	cout<<endl;
+	//cout<<endl;
 	//fileOut();
 	while(1){
 		bytesRead = read(infile,s->buffer + ((s->currBlock) * 1024), 1024);
@@ -120,7 +123,7 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 		if(bytesRead <1024) break;
 	}
 	//close(infile);
-	node.fileSize = (numBlocks*1024) + bytesRead;
+	node.fileSize = ((numBlocks-1)*1024) + bytesRead;
 	memcpy(s->buffer+(s->currBlock*1024), &node,sizeof(node));
 	s->inode[s->currBlock] = node.nodeNum; 
 	s->offset[s->currBlock] = numBlocks;
@@ -135,8 +138,10 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 
 	}
 	//checkpoint_region[node.nodeNum/256] 
-
-	//map->inodes[node.nodeNum] = (unsigned int)((s->segNum*1024)+ s->currBlock);
+	map->inodes[node.nodeNum] = (unsigned int)((s->segNum*1024)+ (s->currBlock-1));
+	cout<<"node.nodeNum: "<<node.nodeNum<<endl;
+	cout<<"IMAP ADDRESS: " << map->inodes[node.nodeNum] <<endl;
+	cout<<"CURR BLOCK: " << s->currBlock<<endl;
 	//for(int i = 0; i<256;i++){
 	memcpy(s->buffer+(s->currBlock*1024),map->inodes + node.nodeNum, 1024);
 	s->inode[s->currBlock] = node.nodeNum; 
@@ -150,26 +155,27 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 		s->currBlock = 0;
 		s->segNum+=1;
 	}
+	cout<<"IMAP ADDRESS: "<< map->inodes[node.nodeNum]<<endl;
 
 	close(infile);
-	unsigned int imapLocation = (s->segNum *1024) + s->currBlock;
-        checkpoint_region[node.nodeNum/256] = imapLocation;
+	//unsigned int imapLocation = (s->segNum *1024) + s->currBlock;
+        checkpoint_region[node.nodeNum/256] = map->inodes[node.nodeNum];
 	//cout<<checkpoint_region[node.nodeNum/256]<<endl;
-	checkOut();
-	checkIn();
+	//checkOut();
+	//checkIn();
 	//cout<<checkpoint_region[0]<<endl;
-        map->inodes[node.nodeNum] = (unsigned int)((s->segNum*1024)+ s->currBlock);
+        //map->inodes[node.nodeNum] = (unsigned int)((s->segNum*1024)+ s->currBlock);
 	s->inode[s->currBlock] = node.nodeNum;
 	s->offset[s->currBlock] = numBlocks;
-	s->currBlock++;
-	numBlocks++;
-	if(s->currBlock == 1015){
+	//s->currBlock++;
+	//numBlocks++;
+	/*if(s->currBlock == 1015){
 		memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
 		memcpy(s->buffer+(1019*1024), s->offset, 4096);
 		writeSegment(s);
 		s->currBlock = 0;
 		s->segNum+=1;
-	}
+	}*/
 
 	//fstream check("./DRIVE/CHECKPOINT_REGION",fstream::in|fstream::out|fstream::binary);
 	//if(!check) cout<<"ERROR"<<endl;
@@ -197,7 +203,7 @@ void remove(string lfs_filename){ //should only need inodes
 	
 }
 
-void list(imap map){ //should only need inodes
+void list(imap * map){ //should only need inodes
 	ifstream mapper;
 	ifstream cr;
 	fileIn();
@@ -225,40 +231,46 @@ void list(imap map){ //should only need inodes
 		cr>>seg;
 		*/
 		//do all this stuff only if the name in the file map is empty
-		unsigned int inodeLoc = map.inodes[i];
+		//unsigned int imapLoc =i/256;
+		unsigned int inodeLoc = map->inodes[i];
+		//if(inodeLoc == 0) continue;
+		cout<<"INODE LOCATION (SHOULD BE 3): "<<inodeLoc<<endl;
+		//inodeLoc = 3;
 		//cout<<"inodeNum "<<inodeNum<<endl;
 		//cout<<"map.inodes[i] " <<map.inodes[i] <<endl;
 		int segNum = inodeLoc/1024;
 		cout<<"segnum " <<segNum<<endl;
 		int offset = inodeLoc%1024;
+		cout<<"OFFSET: "<<offset<<endl;
 		string filename = "./DRIVE/SEGMENT";
 		//filename[15] = segNum;
 		filename = filename +to_string(segNum);
 		cout<<filename<<endl;
-		ifstream infile (filename);
+		//ifstream infile (filename);
 		//infile.open(filename, ios::binary|ios::in);
-		inode temp/* = (inode *)malloc(1024 sizeof(inode))*/;
-		cout << "after malloc" << endl;
-//		FILE * infile;
-//		infile = fopen(filename.c_str(),"rb");
+		inode * temp = (inode *)malloc(1024)/* = (inode *)malloc(1024 sizeof(inode))*/;
+		//cout << "after malloc" << endl;
+		FILE * infile;
+		infile = fopen(filename.c_str(),"rb");
 		//infile+=1024*inodeLoc;
-		cout << "after fileopen" << endl;
-//		fseek(infile,inodeLoc*1024,SEEK_SET);
-		infile.seekg(offset*1024);
-		cout << "after fseek" << endl;
-//		fread(&temp,sizeof(struct _inode),1,infile);
-		char *inodeBlock = new char[sizeof(inode)];
-		infile.read(inodeBlock, sizeof(inode));
+		//cout << "after fileopen" << endl;
+		fseek(infile,(inodeLoc)*1024,SEEK_SET);
+		//infile.seekg(offset*1024);
+		//cout << "after fseek" << endl;
+		fread(temp,sizeof(inode),1,infile);
+		//char *inodeBlock = new char[sizeof(inode)];
+		//infile.read(inodeBlock, sizeof(inode));
 
-		cout << inodeBlock << endl;
-
-
-		memcpy(&temp, inodeBlock, sizeof(inode)/* INODE SIZE GOES HERE */);
+		//cout << inodeBlock << endl;
 
 
-		cout<< temp.name<<endl;
+		//memcpy(&temp, inodeBlock, sizeof(inode)/* INODE SIZE GOES HERE */);
 
-		if(i == 10) break;
+
+		cout<<"temp.name: "<< temp->name<<endl;
+		cout<<"temp.size: "<< temp->fileSize<<endl;
+
+		//if(i==10) break;
 	}
 	exit(0);
 }
@@ -273,15 +285,18 @@ int main(int argc, char * argv[]){
         segment s;
         imap map;
         init(&map);
+	exit(0);
 	checkIn();
 	initializeSegment(&s);
         import2(argv[1],argv[2],&s,&map);
-	list(map);
+	//writeSegment(&s);
+	//list(&map);
 	import2(argv[3],argv[4],&s,&map);
+	list(&map);
 	writeSegment(&s);
 	s.currBlock= 0;
 	s.segNum++;
-	list(map);
+	list(&map);
 	//list();
 
 }

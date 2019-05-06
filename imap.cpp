@@ -24,7 +24,8 @@ void init(imap *map){
 	unsigned int buff;
 	for(int i = 0; i < 40; i++){
 		infile >> ar[i];
-		if(ar[i] == 0) continue;
+		//cout<<
+		//if(ar[i] == 0) continue;
 		//infile.read(reinterpret_cast<char *>(&buff),4);
 		//read(infile,&buff,4);
 		//cout<<ar[i]<<endl;
@@ -32,13 +33,26 @@ void init(imap *map){
 		int offset = ar[i]%1024;
 		string name = "DRIVE/SEGMENT";
 		name+=to_string(segment);
-		//cout<<name<<endl;
+		cout<<name<<endl;
 		FILE *fp = fopen(name.c_str(),"rb");
 		fseek(fp,offset*1024, SEEK_SET);
-		for(int j = 0; j<256; j++){
-			fread(&map->inodes[(i*256) + j],4,1,fp);
+		//fread(&map->inodes[(i*256)],1024,1,fp);
+		/*for(int j = 0; j<1024; j++){
+			cout<< map->inodes[(i*256)+j];
 		}
+		cout<<"BLOCK"<<endl;*/
+		unsigned int temp;
+		for(int j = 0; j<256; j++){
+			fread(&temp,4,1,fp);
+			map->inodes[(i*256)+j] = temp;
+		}
+		for(int j = 0; j<1024; j++){
+                	cout<< map->inodes[(i*256)+j];
+                }
+                cout<<"BLOCK"<<endl;
+
 		fclose(fp);
 	}
+	//memcpy(
 	infile.close();
 }
