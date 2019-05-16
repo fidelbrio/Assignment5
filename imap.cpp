@@ -16,6 +16,70 @@ unsigned int getInode(imap *map, int inode_num){
 	return map->inodes[inode_num];
 }
 
+void init2(imap *map,unsigned int * cr){
+	for(int i = 0; i<40; i++){
+		if(cr[i] == 0){
+			for(int j = 0; j<256;j++){
+				map->inodes[(i*256)+j] = 0;
+			}
+			continue;
+		}
+
+		int segment = cr[i]/1024;
+                int offset = cr[i]%1024;
+                string name = "DRIVE/SEGMENT";
+                name+=to_string(segment);
+                //cout<<"NAME OF SEGMENT CONTAING IMAP #"<<i<<": "<<name<<endl;
+		//cout<<"LOCATED AT BLOCK #"<<offset<<endl;
+                FILE *fp = fopen(name.c_str(),"rb");
+                fseek(fp,offset*1024, SEEK_SET);
+                fread(&map->inodes[i*256],1024,1,fp);
+                /*for(int j = 0; j<1024; j++){
+                        cout<< map->inodes[(i*256)+j];
+                }
+                cout<<"BLOCK"<<endl;*/
+                /*unsigned int temp;
+                for(int j = 0; j<256; j++){
+                        fread(&temp,4,1,fp);
+                        map->inodes[(i*256)+j] = temp;
+                }*/
+                for(int j = 0; j<1024; j++){
+                        cout<< map->inodes[(i*256)+j];
+                }
+                //cout<<"BLOCK"<<endl;
+
+                fclose(fp);
+	}
+}
+
+void init3(imap * map, unsigned int * cr){
+	for(int i = 0; i<40; i++){
+                if(cr[i] == 0){
+                        for(int j = 0; j<256;j++){
+                                map->inodes[(i*256)+j] = 0;
+                        }
+                        continue;
+                }
+
+                int segment = cr[i]/1024;
+                int offset = cr[i]%1024;
+                string name = "DRIVE/SEGMENT";
+                name+=to_string(segment);
+                //cout<<"NAME OF SEGMENT CONTAING IMAP #"<<i<<": "<<name<<endl;
+                //cout<<"LOCATED AT BLOCK #"<<offset<<endl;
+                ifstream file_map(name,ios::in|ios::binary);
+		file_map.seekg((offset)*1024,file_map.beg);
+		file_map.read((char *)&(map->inodes[i*256]),1024);
+		file_map.close();
+                for(int j = 0; j<1024; j++){
+                        cout<< map->inodes[(i*256)+j];
+                }
+                //cout<<"BLOCK"<<endl;
+        }
+}
+
+
+
 void init(imap *map){
 	int tempBuff[256];
 	for(int i = 0; i<256; i++){

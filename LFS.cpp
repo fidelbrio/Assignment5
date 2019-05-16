@@ -8,65 +8,303 @@
 #include <iostream>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sstream>
+#include <algorithm>
+#include <iterator>
+#include <vector>
+#include <bitset>
+#include <utility>
 
 using namespace std;
-
+char clean_segs[64];
 unsigned int checkpoint_region[40];
 char file_map[337920*4];
+bool clean = false;
 
 unsigned int findFreeInode(imap *map){
 	unsigned int index = 0;
 	while(true){
 		if(map->inodes[index] == 0){
-			cout<<"INDEX: "<<index<<endl;
 			return index;
 		}
-		//cout<< map->inodes[index];
 		index++;
 	}
 }
 
-void checkIn(){
-	fstream cr("./DRIVE/CHECKPOINT_REGION",ios::binary|ios::out|ios::in);
-	char buff[160];
-	cr.read(buff,160);
-	memcpy(checkpoint_region,buff,160);
+void checkIn3(){
+	ifstream cr("./DRIVE/CHECKPOINT_REGION",ios::in|ios::binary);
+	cr.read((char *)&checkpoint_region,160);
 	cr.close();
+
+	ifstream cr2("./DRIVE/CR2",ios::in|ios::binary);
+	cr2.read(clean_segs,64);
+	cr2.close();
 }
 
-void checkOut(){
-	fstream cr("./DRIVE/CHECKPOINT_REGION",fstream::binary|ios::out);
-	char buff[160];
-	//cout<<checkpoint_region[0]<<endl;
-	memcpy(buff,checkpoint_region,160);
-	//for(int i = 0; i<160;i++){
-	//	cout<<buff[i];
-	//}
-	//cout<<endl;
-	//cout<<buff[0]<<buff[1]<<buff[2]<<buff[3]<<endl;
-	cr.write(buff,160);
+
+void checkOut3(){
+	ofstream cr("./DRIVE/CHECKPOINT_REGION",ios::out|ios::binary);
+	cr.write((char *)&checkpoint_region,160);
 	cr.close();
+
+	ofstream cr2("./DRIVE/CR2",ios::out|ios::binary);
+	cr2.write(clean_segs,64);
+	cr2.close();
+
 }
 
-void fileIn(){
-	fstream map("./DRIVE/FILE_MAP",ios::binary|ios::out|ios::in);
-	char buff[1351680];
-	map.read(buff,1351680);
-	memcpy(file_map,buff,1351680);
+
+void fileIn2(){
+	ifstream map("./DRIVE/FILE_MAP",ios::binary|ios::in);
+	map.read(file_map,1351680);
 	map.close();
 }
 
-void fileOut(){
-	fstream map("./DRIVE/FILE_MAP",fstream::binary|ios::out);
-	char buff[1351680];
-	memcpy(buff,file_map,1351680);
-	map.write(buff,1351680);
+
+
+
+void fileOut2(){
+	ofstream map("./DRIVE/FILE_MAP",ios::out|ios::binary);
+	map.write((char *)&file_map,337920*4);
 	map.close();
 }
 
-void import2(string filename, string lfs_filename, segment *s, imap *map){
-	//checkIn();//these should be done on startup
-	fileIn();
+int checkSize(string filename){
+	ifstream infile(filename, ios::binary);
+	infile.seekg(0,ios::end);
+	int size = infile.tellg();
+	infile.close();
+	return size;
+}
+
+
+void cleanSeg(imap * map){
+	int index = 0;
+	for(int i = 0; i<64;i++){
+		if((int)clean_segs[index] == 0){
+			index = i;
+			break;
+		}
+	}
+	int dirtyIndex;
+	for(int i = 63; i>=0;i--){
+		if((int)clean_segs[index] == 1){
+			dirtyIndex = i;
+			break;
+		}
+	}
+	//tempSeg and SSB will hold dirty data
+	unsigned int tempSeg[1016*256];
+	pair<int,int> SSB[1024];
+	segment cleanSegment;
+	initializeSegment2(&cleanSegment);
+	string filename = "./DRIVE/SEGMENT";
+	filename = filename + to_string(dirtyIndex);
+	FILE * currentSeg;
+	currentSeg = fopen(filename.c_str(),"rb");
+	if(currentSeg == NULL){
+		cout<<"Input segment file does not exist"<<endl;
+		exit(1);
+	}
+	fread(tempSeg,1016*1024,1,currentSeg);
+	fread(SSB,1024*8,1,currentSeg);
+	fclose(currentSeg);
+	bool checkWrite = false;
+	int remainder;
+	clean_segs[dirtyIndex] = (char)0;
+	clean_segs[cleanSegment.segNum] = (char)1;
+	for(int i = 0; i<1016; i++){
+		if(cleanSegment.currBlock == 1014){
+			checkWrite = true;
+			remainder = i+1;
+		}
+		int address = dirtyIndex * 1024;
+		if(SSB[i].first > -3){
+			if(SSB[i].first > -1){
+				address += i;
+				int inodeLoc = map->inodes[SSB[i].first];
+
+				inode * temp = (inode *)malloc(sizeof(inode));
+				if(inodeLoc/1024 == dirtyIndex){
+					memcpy(temp,tempSeg+((inodeLoc%1024)*256),sizeof(inode));
+				}else{
+					string filename2 = "./DRIVE/SEGMENT";
+					filename2 = filename2 +to_string(inodeLoc/1024);
+					FILE * infile;
+					infile = fopen(filename2.c_str(),"rb");
+					fseek(infile,inodeLoc%1024,SEEK_SET);
+					fread(temp,sizeof(inode),1,infile);
+					fclose(infile);
+				}
+				if(temp->blocks[SSB[i].second] == address){
+					memcpy(cleanSegment.buffer+((cleanSegment.currBlock)*256), tempSeg+(i*256),1024);
+					cleanSegment.currBlock++;
+					pair<int,int> fillPair(SSB[i].first,SSB[i].second);
+					cleanSegment.segmentSummary[cleanSegment.currBlock-1] = fillPair;
+					if(checkWrite){
+						for(int j =0; j<1016;j++){
+							if(cleanSegment.segmentSummary[j].first == temp->nodeNum){
+									temp->blocks[cleanSegment.segmentSummary[j].second] = (cleanSegment.segNum*1024) + j;
+							}
+						}
+						map->inodes[temp->nodeNum] = (cleanSegment.segNum * 1024) + (cleanSegment.currBlock);
+						pair<int,int> fillPair2(-2,temp->nodeNum);
+						cleanSegment.segmentSummary[cleanSegment.currBlock] = fillPair2;
+						memcpy(cleanSegment.buffer+((cleanSegment.currBlock)*256),temp,sizeof(inode));
+						cleanSegment.currBlock++;
+						memcpy(file_map+((temp->nodeNum*132) + 128),&(temp->nodeNum),4);
+						memcpy(cleanSegment.buffer+(cleanSegment.currBlock*256),map->inodes+((temp->nodeNum/256)*256),1024);
+						pair<int,int> fillPair3(-1,temp->nodeNum/256);
+						cleanSegment.segmentSummary[cleanSegment.currBlock] = fillPair3;
+						checkpoint_region[temp->nodeNum/256] = (cleanSegment.segNum*1024) + (cleanSegment.currBlock);
+						cleanSegment.currBlock++;
+					}
+				}
+			}else if(SSB[i].first == -2){
+				address += i;
+				if(map->inodes[SSB[i].second] == address){
+					inode * temp = (inode *)malloc(sizeof(inode));
+					memcpy(temp,tempSeg+(i*256),sizeof(inode));
+					for(int j =0; j<1016;j++){
+						if(cleanSegment.segmentSummary[j].first == SSB[i].second){
+							temp->blocks[cleanSegment.segmentSummary[j].second] = (cleanSegment.segNum*1024) + j;
+						}
+					}
+					map->inodes[SSB[i].second] = (cleanSegment.segNum*1024) + (cleanSegment.currBlock);
+					cleanSegment.currBlock++;
+					pair<int,int> fillPair(-2,SSB[i].second);
+					cleanSegment.segmentSummary[cleanSegment.currBlock-1] = fillPair;
+					memcpy(cleanSegment.buffer+((cleanSegment.currBlock-1)*256),temp,sizeof(inode));
+					memcpy(file_map+((temp->nodeNum*132) + 128),&(temp->nodeNum),4);
+					memcpy(cleanSegment.buffer+(cleanSegment.currBlock*256),map->inodes+((SSB[i].second/256)*256),1024);
+					pair<int,int> fillPair2(-1,SSB[i].second/256);
+					cleanSegment.segmentSummary[cleanSegment.currBlock] = fillPair2;
+					checkpoint_region[SSB[i].second/256] = (cleanSegment.segNum*1024) + (cleanSegment.currBlock);
+					cleanSegment.currBlock++;
+				}
+			}else{
+				address+=i;
+				if(checkpoint_region[SSB[i].second] == address){
+					checkpoint_region[SSB[i].second] = (cleanSegment.segNum*1024) + (cleanSegment.currBlock);
+					pair<int,int> fillPair(-1,SSB[i].second);
+					cleanSegment.segmentSummary[cleanSegment.currBlock] = fillPair;
+					memcpy(cleanSegment.buffer+(cleanSegment.currBlock*256),map->inodes+(SSB[i].second*256),1024);
+					cleanSegment.currBlock++;
+				}
+			}
+		}
+		if(checkWrite){
+			memcpy(cleanSegment.buffer+(1016*256), cleanSegment.segmentSummary, 1024*8);
+			break;
+		}
+		if(i == 1015 && cleanSegment.currBlock > 1010){
+			i = 0;
+			for(int b = 63; b>=0;b--){
+				if((int)clean_segs[index] == 1){
+				dirtyIndex = b;
+				break;
+				}
+			}
+			//unsigned int tempSeg[1016*256];
+			//pair<int,int> SSB[1024];
+			filename = "./DRIVE/SEGMENT";
+			filename = filename + to_string(dirtyIndex);
+			//FILE * currentSeg;
+			currentSeg = fopen(filename.c_str(),"rb");
+			if(currentSeg == NULL){
+				cout<<"Input segment file does not exist"<<endl;
+				exit(1);
+			}
+			fread(tempSeg,1016*1024,1,currentSeg);
+			fread(SSB,1024*8,1,currentSeg);
+			fclose(currentSeg);
+			clean_segs[dirtyIndex] = (char)0;
+		}
+	}
+	fileOut2();
+	checkOut3();
+	clean_segs[cleanSegment.segNum] = (char)1;
+	writeSegment(&cleanSegment);
+	if(checkWrite){
+		segment cleanSegment2;
+		initializeSegment2(&cleanSegment2);
+		for(int k = remainder; k<1016;k++){
+			int address = dirtyIndex * 1024;
+			if(SSB[k].first > -3){
+				if(SSB[k].first > -1){
+					address += k;
+					int inodeLoc = map->inodes[SSB[k].first];
+					inode * temp = (inode *)malloc(sizeof(inode));
+					if(inodeLoc/1024 == dirtyIndex){
+						memcpy(temp,tempSeg+((inodeLoc%1024)*256),sizeof(inode));
+					}else{
+						string filename2 = "./DRIVE/SEGMENT";
+						filename2 = filename2 +to_string(inodeLoc/1024);
+						//cout<<filename2<<endl;
+						FILE * infile;
+						infile = fopen(filename2.c_str(),"rb");
+						fseek(infile,inodeLoc%1024,SEEK_SET);
+						fread(temp,sizeof(inode),1,infile);
+						fclose(infile);
+					}
+					if(temp->blocks[SSB[k].second] == address){
+						memcpy(cleanSegment2.buffer+((cleanSegment2.currBlock)*256), tempSeg+(k*256),1024);
+						cleanSegment2.currBlock++;
+						pair<int,int> fillPair(SSB[k].first,SSB[k].second);
+						cleanSegment2.segmentSummary[cleanSegment2.currBlock-1] = fillPair;
+					}
+				}else if(SSB[k].first == -2){
+					address += k;
+					if(map->inodes[SSB[k].second] == address){
+						//LIVE INODE
+						inode * temp = (inode *)malloc(sizeof(inode));
+						memcpy(temp,tempSeg+(k*256),sizeof(inode));
+						for(int j =0; j<1016;j++){
+							if(cleanSegment2.segmentSummary[j].first == SSB[k].second){
+								temp->blocks[cleanSegment2.segmentSummary[j].second] = (cleanSegment2.segNum*1024) + j;
+							}
+						}
+						map->inodes[SSB[k].second] = (cleanSegment2.segNum*1024) + (cleanSegment2.currBlock);
+						cleanSegment2.currBlock++;
+						pair<int,int> fillPair(-2,SSB[k].second);
+						cleanSegment2.segmentSummary[cleanSegment2.currBlock-1] = fillPair;
+						memcpy(cleanSegment2.buffer+((cleanSegment2.currBlock-1)*256),temp,sizeof(inode));
+						memcpy(file_map+((temp->nodeNum*132) + 128),&(temp->nodeNum),4);
+						memcpy(cleanSegment2.buffer+(cleanSegment2.currBlock*256),map->inodes+((SSB[k].second/256)*256),1024);
+						pair<int,int> fillPair2(-1,SSB[k].second/256);
+						cleanSegment2.segmentSummary[cleanSegment2.currBlock] = fillPair2;
+						checkpoint_region[SSB[k].second/256] = (cleanSegment2.segNum*1024) + (cleanSegment2.currBlock);
+						cleanSegment.currBlock++;
+					}
+				}else{
+					address+=k;
+					if(checkpoint_region[SSB[k].second] == address){
+						checkpoint_region[SSB[k].second] = (cleanSegment2.segNum*1024) + (cleanSegment2.currBlock);
+						pair<int,int> fillPair(-1,SSB[k].second);
+						cleanSegment2.segmentSummary[cleanSegment2.currBlock] = fillPair;
+						memcpy(cleanSegment2.buffer+(cleanSegment2.currBlock*256),map->inodes+(SSB[k].second*256),1024);
+						cleanSegment2.currBlock++;
+					}
+				}
+			}
+		}
+		memcpy(cleanSegment2.buffer+(1016*256), cleanSegment2.segmentSummary, 1024*8);
+		fileOut2();
+		checkOut3();
+		clean_segs[cleanSegment2.segNum] = (char)1;
+		writeSegment(&cleanSegment2);
+	}
+}
+
+
+
+
+
+void import(string filename, string lfs_filename, segment *s, imap *map){
+	if(checkSize(filename) > 128*1024){
+		cout<<"Sorry, that file is too big. Please try another file"<<endl;
+		return;
+	}
 	inode node;
 	memcpy(node.name,lfs_filename.c_str(),128);
 	//node.name = lfs_filename.c_str();
@@ -76,15 +314,6 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 	int start = s->currBlock;
 	int bytesRead;
 	node.nodeNum = findFreeInode(map);
-	//cout<<inodeNum<<endl;
-	/*FILE* mapper;
-	mapper = fopen("./DRIVE/FILE_MAP","r+b");
-	fseek(mapper,132*node.nodeNum,SEEK_SET);
-	fputs(node.name.c_str(),mapper);
-	fseek(mapper, (132*node.nodeNum)+128, SEEK_SET);
- 	fputs(to_string(node.nodeNum).c_str(),mapper);*/
-	cout<<"INITIAL NODENUM: "<<node.nodeNum<<endl;
-	cout<<"INITIAL NODENAME: "<<node.name<<endl;
 	char buffer[128];
 	for(int i =0 ;i<128;i++){
 		if(i<lfs_filename.size()){
@@ -93,274 +322,437 @@ void import2(string filename, string lfs_filename, segment *s, imap *map){
 			buffer[i] = '0';
 		}
 	}
-	//memcpy(buffer,lfs_filename.c_str(),128);
-	//cout<<sizeof(buffer)<<endl;
-	//cout<<buffer<<endl;
-	memcpy(file_map+(node.nodeNum*132),buffer,128);
-	//for(int i =0; i<128;i++) cout<<file_map[(node.nodeNum*132)+i];
-	//cout<<endl;
-	memcpy(file_map+((node.nodeNum*132) + 4),&(node.nodeNum),4);
-	for(int i = 0; i<4;i++){
-		//cout<<file_map[(node.nodeNum*132)+i+128];
+	for(int i = 0; i<128; i++){
+		node.blocks[i] = 65540;
 	}
-	//cout<<endl;
-	//fileOut();
+	for(int i = 0; i<128;i++){
+		file_map[(node.nodeNum*132)+i] = buffer[i];
+	}
+	clean_segs[s->segNum] = (char)1;
+	memcpy(file_map+((node.nodeNum*132) + 128),&(node.nodeNum),4);
 	while(1){
-		bytesRead = read(infile,s->buffer + ((s->currBlock) * 1024), 1024);
+		bytesRead = read(infile,s->buffer + ((s->currBlock) * 256), 1024);//CHANGED
 		node.blocks[numBlocks] = (unsigned int)((s->segNum*1024)+s->currBlock);
-		s->offset[s->currBlock] = numBlocks;
+		//s->offset[s->currBlock] = numBlocks;
+		pair<int,int> summary(node.nodeNum,numBlocks);
+		s->segmentSummary[s->currBlock] = summary;
 		numBlocks++;
-		s->inode[s->currBlock] = node.nodeNum;
+		//s->inode[s->currBlock] = node.nodeNum;
 		s->currBlock++;
-		if(s->currBlock == 1015){
-			memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
-			memcpy(s->buffer+(1019*1024), s->offset, 4096);
+		if(s->currBlock == 1016){
+			memcpy(s->buffer+(s->currBlock*256), s->segmentSummary, 1024*8);//CHANGED
+			//memcpy(s->buffer+(1019*256), s->offset, 4096);//CHANGED
 			writeSegment(s);
+			if(clean){
+				cleanSeg(map);
+				clean = false;
+			}
+			initializeSegment2(s);
 			s->currBlock = 0;
-			s->segNum+=1;
+			s->currByte =0;
+			//s->segNum+=1;
 		}
 		//check if currBlock == 1024, and if so, write it out
 		if(bytesRead <1024) break;
 	}
 	//close(infile);
 	node.fileSize = ((numBlocks-1)*1024) + bytesRead;
-	memcpy(s->buffer+(s->currBlock*1024), &node,sizeof(node));
-	s->inode[s->currBlock] = node.nodeNum; 
-	s->offset[s->currBlock] = numBlocks;
+	memcpy(s->buffer+(s->currBlock*256), &node,sizeof(node));//CHANGED
+	pair<int,int> summary(-2,node.nodeNum);
+	s->segmentSummary[s->currBlock] = summary;
+	//s->inode[s->currBlock] = node.nodeNum; 
+	//s->offset[s->currBlock] = numBlocks;
 	numBlocks++;
 	s->currBlock++;
-	if(s->currBlock == 1015){
-		memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
-		memcpy(s->buffer+(1019*1024), s->offset, 4096);	
+	if(s->currBlock == 1016){
+		memcpy(s->buffer+(s->currBlock*256), s->segmentSummary, 1024*8);//CHANGED
+		//memcpy(s->buffer+(1019*256), s->offset, 4096);//CHANGED
 		writeSegment(s);
+		if(clean){
+			cleanSeg(map);
+			clean = false;
+		}
+		initializeSegment2(s);
 		s->currBlock = 0;
-		s->segNum += 1;
-
+		s->currByte =0;
 	}
-	//checkpoint_region[node.nodeNum/256] 
 	map->inodes[node.nodeNum] = (unsigned int)((s->segNum*1024)+ (s->currBlock-1));
-	cout<<"node.nodeNum: "<<node.nodeNum<<endl;
-	cout<<"IMAP ADDRESS: " << map->inodes[node.nodeNum] <<endl;
-	cout<<"CURR BLOCK: " << s->currBlock<<endl;
-	//for(int i = 0; i<256;i++){
-	memcpy(s->buffer+(s->currBlock*1024),map->inodes + node.nodeNum, 1024);
-	s->inode[s->currBlock] = node.nodeNum; 
-	s->offset[s->currBlock] = numBlocks;
+	memcpy(s->buffer+(s->currBlock*256),map->inodes + node.nodeNum/256, 1024);
+	pair<int,int> summary2(-1,node.nodeNum/40);
+	s->segmentSummary[s->currBlock] = summary2;
 	numBlocks++;
 	s->currBlock++;
-	if(s->currBlock == 1015){
-		memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
-		memcpy(s->buffer+(1019*1024), s->offset, 4096);
+	if(s->currBlock == 1016){
+		memcpy(s->buffer+(s->currBlock*256), s->segmentSummary, 1024*8);
 		writeSegment(s);
+		if(clean){
+			cleanSeg(map);
+			clean = false;
+		}
+		initializeSegment2(s);
 		s->currBlock = 0;
-		s->segNum+=1;
+		s->currByte =0;
 	}
-	cout<<"IMAP ADDRESS: "<< map->inodes[node.nodeNum]<<endl;
-
 	close(infile);
-	//unsigned int imapLocation = (s->segNum *1024) + s->currBlock;
-        checkpoint_region[node.nodeNum/256] = map->inodes[node.nodeNum];
-	//cout<<checkpoint_region[node.nodeNum/256]<<endl;
-	//checkOut();
-	//checkIn();
-	//cout<<checkpoint_region[0]<<endl;
-        //map->inodes[node.nodeNum] = (unsigned int)((s->segNum*1024)+ s->currBlock);
-	s->inode[s->currBlock] = node.nodeNum;
-	s->offset[s->currBlock] = numBlocks;
-	//s->currBlock++;
-	//numBlocks++;
-	/*if(s->currBlock == 1015){
-		memcpy(s->buffer+(s->currBlock*1024), s->inode, 4096);
-		memcpy(s->buffer+(1019*1024), s->offset, 4096);
-		writeSegment(s);
-		s->currBlock = 0;
-		s->segNum+=1;
-	}*/
-
-	//fstream check("./DRIVE/CHECKPOINT_REGION",fstream::in|fstream::out|fstream::binary);
-	//if(!check) cout<<"ERROR"<<endl;
-	//check.seekg((node.nodeNum/40)*4);
-	//check.write(to_string(imapLocation).c_str(),4);
-	//check<<"aouenfaoefinefoin";
-	//check <<imapLocation;
-	//int check = open("./DRIVE/CHECKPOINT_REGION",O_RDWR);
-	//lseek(check,(node.nodeNum/40)*4,SEEK_SET);
-	//cout<<node.nodeNum/10<<endl;
-	//fstream outfile;
-	//outfile.open("./DRIVE/CHECKPOINT_REGION");//,ios_base::binary);
-	//cout<<"imapLocation: "<<imapLocation<<endl;
-	//write(check,&imapLocation,sizeof(unsigned int));
-	//outfile.seekp(imapLocation*4,ios_base::beg);
-	//cout<<(char *)&imapLocation<<endl;
-	//outfile.write((char *)&imapLocation,4);
-	//outfile.write(to_string(imapLocation).c_str(),4);
-	//close(check);
-	//exit(0);
-	//outfile.close();
-	writeSegment(s);
+    	checkpoint_region[node.nodeNum/256] = (s->segNum*1024) + s->currBlock - 1;
 }
-void remove(string lfs_filename, imap * map){ //should only need inodes
-	char *buffer = new char[128];
+
+void remove(string lfs_filename, imap *map, segment * s){
+	char buffer[128];
 	int namesize = lfs_filename.size();
-	char *filename = new char[namesize];
-	cout << lfs_filename << endl;
-//	char g = '0';
-	for(int i = 0; i < namesize; i++){
-//		if(i < sizeof(lfs_filename)){
-		filename[i] = lfs_filename[i];
-//		}else{
-//			n = sprintf(*filename[i], '0');
-//			filename[i] = g;
-//		}
+	for(int i = 0; i<128; i++){
+		if(i<namesize){
+			buffer[i] = lfs_filename[i];
+		}else{
+			buffer[i] = '0';
+		}
 	}
-	int position;
+	int filler[33];
+	for(int i = 0; i<33;i++){
+		filler[i] = 0;
+	}
 	int index = 0;
-	ifstream file ("DRIVE/FILE_MAP");
 	bool found = false;
-	while(!found){
-		position = index*132;
-		file.seekg(position);
-		file.read(buffer, 128);
-		found = true;
-		for(int i = 0; i < namesize; i++){
-//			if(buffer[i] == '0'){ // This if makes it quit
-//				break;
-//			}
-			cout << buffer[i] << '+' << filename[i] << endl;
-			if(buffer[i] != filename[i]){
-				found = false;
+	for(int i = 0; i<10240;i++){
+		int currIndex = i*132;
+		for (int j = 0; j<128;j++){
+			if(buffer[j] != file_map[currIndex+j]){
+				break;
 			}
+			found = true;
 		}
-		if(buffer[namesize] != '0'){
-			found = false;
+		if(found){
+			for(int j= 0; j<132;j++){
+				file_map[currIndex+j] = (char)0;
+			}
+			map->inodes[i] = 0;
+			memcpy(s->buffer+(s->currBlock*256),map->inodes + (i/256), 1024);
+			checkpoint_region[i/256] = (s->segNum*1024) + (s->currBlock );
+			s->currBlock++;
+			return;
 		}
-		index++;
-		if(index == 10240){
+	}
+}
+
+void list(imap * map, segment *s){
+	for(int i = 0; i<10240; i++){
+		unsigned int inodeLoc = map->inodes[i];
+		if(inodeLoc == 0) continue;
+		int segNum = inodeLoc/1024;
+		int offset = inodeLoc%1024;
+		string filename = "./DRIVE/SEGMENT";
+		inode * temp = (inode *)malloc(sizeof(inode));
+		if(segNum == s->segNum){
+			memcpy(temp,&s->buffer[(offset*256)],sizeof(inode));
+		}else{
+			filename = filename +to_string(segNum);
+			FILE * infile;
+			infile = fopen(filename.c_str(),"rb");
+			fseek(infile,(offset)*1024,SEEK_SET);
+			fread(temp,sizeof(inode),1,infile);
+			fclose(infile);
+		}
+
+		cout<<"File "<<i<<" Name: "<< temp->name<<endl;
+		cout<<"File " << i<<" Size: "<< temp->fileSize<<endl;
+
+	}
+}
+
+
+void cat(string lfs_filename, imap *map, segment *s){
+	char buffer[128];
+	bool found = false;
+	unsigned int blockNum;
+	for(int i =0 ;i<128;i++){
+        	if(i<lfs_filename.size()){
+                	buffer[i] = lfs_filename[i];
+                }else{
+                        buffer[i] = '0';
+                }
+        }
+	for(int i = 0; i<10240; i++){
+		char name[128];
+		memcpy(name, file_map+(i*132),128);
+		blockNum = map->inodes[i];
+		for(int j = 0; j<128;j++){
+			if(buffer[j] != name[j]){
+				break;
+			}
+			if(j == 127) found = true;
+		}
+		if(found){
 			break;
 		}
 	}
-	index--;
 	if(!found){
-		cout << "Could not find the specified file" << endl;
+		cout<<"Sorry, that specified file was not found. Please try again"<<endl;
+		return;
 	}
-	if(found){
-		cout << index << endl;
-		map->inodes[index] = 0;
+        int segNum = blockNum/1024;
+        int offset = blockNum%1024;
+	string filename;
+	inode * temp = (inode *)malloc(1024);
+	if(s->segNum == segNum){
+		memcpy(temp,&s->buffer[(offset*256)],sizeof(inode));
+	}else{
+        	filename = "./DRIVE/SEGMENT";
+        	filename = filename +to_string(segNum);
+        	FILE * infile;
+        	infile = fopen(filename.c_str(),"rb");
+        	fseek(infile,(offset)*1024,SEEK_SET);
+        	fread(temp,sizeof(inode),1,infile);
+        	fclose(infile);
 	}
-	//Must erase the file name in the file map
-
-	char *entireFile = new char[1351680];
-	file.seekg(0);
-	file.read(entireFile, 1351680);
-//	index -= 1;
-	for(int i = 0; i < 128; i++){
-		entireFile[position+i] = '0';
-	}
-	file.close();
-	ofstream file2;
-	file2.open("DRIVE/FILE_MAP");
-	file2 << entireFile;
-	file2.close();
-
-}
-
-
-void list(imap * map){ //should only need inodes
-	ifstream mapper;
-	ifstream cr;
-	fileIn();
- 	mapper.open("./DRIVE/FILE_MAP",ios::in|ios::binary);
-	for(int i = 0; i<10240; i++){
-		//mapper.seekg(132*i,mapper.beg);
-		/*
-		char name[128];
-		char addr[4];
-		unsigned int seg;
-		memcpy(name,file_map+(132*i),128);
-		cout<<"memcpy name: " << name<<endl;
-		memcpy(addr,file_map+((132*i)+128)],4);
-		seg = atoi(addr);
-		cout<<seg<<endl;
-		cout<<"memcpy addr: "<<addr<<endl;
-		for(int j = 0; j<128;j++){
-			mapper >> name[j];
+	int size = temp->fileSize;
+	int i = 0;
+	char file[((size/1024)+1)*1024];
+	char file2[((size/1024)+1) *1024];
+	while(size>0){
+		unsigned int currBlock = temp->blocks[i];
+		segNum = currBlock/1024;
+		offset = currBlock%1024;
+		if(segNum == s->segNum){
+			memcpy(file+(1024*i),s->buffer + (offset*256),1024);
+		}else{
+			filename = "./DRIVE/SEGMENT";
+			filename = filename + to_string(segNum);
+			FILE * currentSeg;
+			if(currentSeg == NULL){
+				cout<<"Input segment file does not exist"<<endl;
+				exit(1);
+			}
+			currentSeg = fopen(filename.c_str(),"rb");
+			fseek(currentSeg,1024*offset,SEEK_SET);
+				fread(file+(1024*i),1024,1,currentSeg);
+			fclose(currentSeg);
 		}
-		mapper >> addr;
-		cout<<name<<endl;
-		cout<<addr<<endl;
-		cr.open("./DRIVE/CHECKPOINT_REGION",ios::in|ios::binary);
-		//cr.seekg(4*addr,cr.beg);
-		cr>>seg;
-		*/
-		//do all this stuff only if the name in the file map is empty
-		//unsigned int imapLoc =i/256;
-		unsigned int inodeLoc = map->inodes[i];
-		if(inodeLoc == 0) continue;
-		cout<<"map->inodes["<<i<<"] = "<< map->inodes[i] <<endl;
-		//if(inodeLoc == 0) continue;
-		cout<<"INODE LOCATION (SHOULD BE 3): "<<inodeLoc<<endl;
-		//inodeLoc = 3;
-		//cout<<"inodeNum "<<inodeNum<<endl;
-		//cout<<"map.inodes[i] " <<map.inodes[i] <<endl;
-		int segNum = inodeLoc/1024;
-		cout<<"segnum " <<segNum<<endl;
-		int offset = inodeLoc%1024;
-		cout<<"OFFSET: "<<offset<<endl;
-		string filename = "./DRIVE/SEGMENT";
-		//filename[15] = segNum;
-		filename = filename +to_string(segNum);
-		cout<<filename<<endl;
-		//ifstream infile (filename);
-		//infile.open(filename, ios::binary|ios::in);
-		inode * temp = (inode *)malloc(1024)/* = (inode *)malloc(1024 sizeof(inode))*/;
-		//cout << "after malloc" << endl;
-		FILE * infile;
-		infile = fopen(filename.c_str(),"rb");
-		//infile+=1024*inodeLoc;
-		//cout << "after fileopen" << endl;
-		fseek(infile,(inodeLoc)*1024,SEEK_SET);
-		//infile.seekg(offset*1024);
-		//cout << "after fseek" << endl;
-		fread(temp,sizeof(inode),1,infile);
-		//char *inodeBlock = new char[sizeof(inode)];
-		//infile.read(inodeBlock, sizeof(inode));
+		i++;
+		size-=1024;
+	}
+	cout<<file<<endl;
 
-		//cout << inodeBlock << endl;
+}
 
-
-		//memcpy(&temp, inodeBlock, sizeof(inode)/* INODE SIZE GOES HERE */);
-
-
-		cout<<"temp.name: "<< temp->name<<endl;
-		cout<<"temp.size: "<< temp->fileSize<<endl;
-
-		//if(i==4) break;
+void display(string lfs_filename, int howmany, int start, imap *map, segment *s){
+	char buffer[128];
+	bool found = false;
+	unsigned int blockNum;
+	for(int i =0 ;i<128;i++){
+        	if(i<lfs_filename.size()){
+                	buffer[i] = lfs_filename[i];
+                }else{
+                        buffer[i] = '0';
+                }
+        }
+	for(int i = 0; i<10240; i++){
+		char name[128];
+		memcpy(name, file_map+(i*132),128);
+		blockNum = map->inodes[i];
+		for(int j = 0; j<128;j++){
+			if(buffer[j] != name[j]){
+				break;
+			}
+			if(j == 127) found = true;
+		}
+		if(found){
+			break;
+		}
+	}
+	if(!found){
+		cout<<"Sorry, that specified file was not found. Please try again"<<endl;
+		return;
+	}
+        int segNum = blockNum/1024;
+        int offset = blockNum%1024;
+	inode * temp = (inode *)malloc(1024);
+	string filename;
+	if(segNum == s->segNum){
+		memcpy(temp,&s->buffer[(offset*256)],sizeof(inode));
+	}else{
+		filename = "./DRIVE/SEGMENT";
+        	filename = filename +to_string(segNum);
+        	FILE * infile;
+        	infile = fopen(filename.c_str(),"rb");
+        	fseek(infile,(offset)*1024,SEEK_SET);
+        	fread(temp,sizeof(inode),1,infile);
+        	fclose(infile);
+	}
+	int size = temp->fileSize;
+	int i = 0;
+	char file[((size/1024)+1)*1024];
+	while(size>0){
+		unsigned int currBlock = temp->blocks[i];
+		segNum = currBlock/1024;
+		offset = currBlock%1024;
+		if(segNum == s->segNum){
+			memcpy(file+(1024*i),s->buffer + (offset*256),1024);
+		}else{
+			filename = "./DRIVE/SEGMENT";
+			filename = filename + to_string(segNum);
+			FILE * currentSeg;
+			if(currentSeg == NULL){
+				cout<<"Input segment file does not exist"<<endl;
+				exit(1);
+			}
+			currentSeg = fopen(filename.c_str(),"rb");
+			fseek(currentSeg,1024*offset,SEEK_SET);
+			fread(file+(1024*i),1024,1,currentSeg);
+			fclose(currentSeg);
+		}
+		i++;
+		size-=1024;
+	}
+	if(start+howmany > temp->fileSize){
+		char outBuff2[(temp->fileSize)-start];
+		memcpy(outBuff2,file+start,(temp->fileSize - start));
+		cout<<outBuff2<<endl;
+		return;
+	}else{
+		char outBuff[howmany+1];
+		outBuff[howmany] = '\0';
+		memcpy(outBuff,file+start,howmany);
+		cout<<outBuff<<endl;
+		return;
 	}
 }
 
-void shutdown(segment *s){
-	writeSegment(s);
-	exit(0);
+void overwrite(string lfs_filename, int howmany, int start, char c, imap *map, segment *s){
+	char buffer[128];
+	bool found = false;
+	unsigned int blockNum;
+	for(int i =0 ;i<128;i++){
+        	if(i<lfs_filename.size()){
+                	buffer[i] = lfs_filename[i];
+                }else{
+                        buffer[i] = '0';
+                }
+        }
+	for(int i = 0; i<10240; i++){
+		char name[128];
+		memcpy(name, file_map+(i*132),128);
+		blockNum = map->inodes[i];
+		for(int j = 0; j<128;j++){
+			if(buffer[j] != name[j]){
+				break;
+			}
+			if(j == 127) found = true;
+		}
+		if(found){
+			break;
+		}
+	}
+	if(!found){
+		cout<<"Sorry, that specified file was not found. Please try again"<<endl;
+		return;
+	}
+	inode * temp = (inode *)malloc(1024);
+        int segNum = blockNum/1024;
+        int offset = blockNum%1024;
+	string filename;
+	if(segNum == s->segNum){
+		memcpy(temp,&s->buffer[(offset*256)],sizeof(inode));
+	}else{
+		filename = "./DRIVE/SEGMENT";
+        	filename = filename +to_string(segNum);
+        	FILE * infile;
+        	infile = fopen(filename.c_str(),"rb");
+        	fseek(infile,(offset)*1024,SEEK_SET);
+        	fread(temp,sizeof(inode),1,infile);
+        	fclose(infile);
+	}
+	int size = temp->fileSize;
+	int i = 0;
+	int tempSize = temp->fileSize + max(0,(start+howmany) - temp->fileSize);
+	char file2[((tempSize/1024)+1)*1024];
+	while(size>0){
+		unsigned int currBlock = temp->blocks[i];
+		segNum = currBlock/1024;
+		offset = currBlock%1024;
+		if(segNum == s->segNum){
+			memcpy(file2+(1024*i),s->buffer + (offset*256),1024);
+		}else{
+			filename = "./DRIVE/SEGMENT";
+			filename = filename + to_string(segNum);
+			FILE * currentSeg;
+			if(currentSeg == NULL){
+				cout<<"Input segment file does not exist"<<endl;
+				exit(1);
+			}
+			currentSeg = fopen(filename.c_str(),"rb");
+			fseek(currentSeg,1024*offset,SEEK_SET);
+			fread(file2+(1024*i),1024,1,currentSeg);
+			fclose(currentSeg);
+		}
+		i++;
+		size-=1024;
+	}
+	for(int j = 0; j<howmany; j++){
+		file2[j+start] = c;
+	}
+	ofstream outer("temp.txt");
+	outer << file2;
+	outer.close();
+	remove(lfs_filename,map,s);
+	import("temp.txt",lfs_filename,s,map);
+	cout<<file2<<endl;
 }
+
+
 
 
 int main(int argc, char * argv[]){
-        segment s;
-        imap map;
-        init(&map);
-	//exit(0);
-	checkIn();
-	initializeSegment(&s);
-        import2(argv[1],argv[2],&s,&map);
-	//writeSegment(&s);
-	//list(&map);
-	import2(argv[3],argv[4],&s,&map);
-	list(&map);
-	writeSegment(&s);
-	s.currBlock= 0;
-	s.segNum++;
-	//list(&map);
-	//list();
+	checkIn3();
+	fileIn2();
+	imap map;
+	init3(&map, checkpoint_region);
+	segment s;
+	initializeSegment2(&s);
+	bool clean = false;
+	while(true){
+		int index = 0;
+		for(int i = 0; i<64;i++){
+			if((int)clean_segs[index] != 0){
+				index++;
+			}
+			if(index == 2){
+				clean = true;
+				//clean();
+				break;
+			}
+		}
+
+	
+
+
+		string currIn;
+		vector<string> inputs;
+		getline(cin,currIn);
+		istringstream iss(currIn);
+		copy(istream_iterator<string>(iss),istream_iterator<string>(),back_inserter(inputs));
+		if(inputs.at(0).compare("import")==0){
+			import(inputs.at(1),inputs.at(2),&s,&map);
+		}else if(inputs.at(0).compare("remove")==0){
+			remove(inputs.at(1),&map, &s);
+		}else if(inputs.at(0).compare("list") ==0){
+			list(&map, &s);
+		}else if(inputs.at(0).compare("cat") == 0){
+			cat(inputs.at(1),&map, &s);
+		}else if(inputs.at(0).compare("display") == 0){
+			display(inputs.at(1),stoi(inputs.at(2)), stoi(inputs.at(3)), &map, &s);
+		}else if(inputs.at(0).compare("overwrite")== 0){
+			overwrite(inputs.at(1),stoi(inputs.at(2)), stoi(inputs.at(3)), inputs.at(4)[0], &map, &s);
+		}else if(inputs.at(0).compare("Shutdown")==0){
+			checkOut3();
+			fileOut2();
+			memcpy(s.buffer+(1016*256), s.segmentSummary, 1024*8);
+			writeSegment(&s);
+			if(clean) cleanSeg(&map);
+			exit(0);
+		}else{
+			cout<<"Sorry, that is not a recognized command. Please try again."<<endl;
+		}
+	}
 
 }
 
